@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QComboBox>
 #include <memory>
+#include "MRMesh/MRBox.h"
 #include "CutterVisualizer.h"
 #include "CylinderGenerator.h"
 #include "BooleanOperator.h"
@@ -40,9 +41,14 @@ private slots:
     void onLoadTargetMesh();
     
     /**
-     * @brief 保存结果网格
+     * @brief 保存切割结果
      */
     void onSaveResult();
+    
+    /**
+     * @brief 保存切割碎片
+     */
+    void onSaveCutPiece();
     
     /**
      * @brief 执行布尔切割运算
@@ -85,6 +91,19 @@ private:
     void updateCutterMesh();
     void updateInfoLabel();
     
+    /**
+     * @brief 创建初始场景（长方体）
+     */
+    void createInitialScene();
+    
+    /**
+     * @brief 生成一个简单的长方体网格
+     * @param center 长方体中心点
+     * @param size 长方体尺寸 (width, height, depth)
+     * @return 生成的长方体网格
+     */
+    MR::Mesh createBoxMesh(const MR::Vector3f& center, const MR::Vector3f& size);
+    
     // 中央可视化组件
     CutterVisualizer* visualizer_ = nullptr;
     
@@ -96,8 +115,12 @@ private:
     
     // 网格数据
     std::shared_ptr<MR::Mesh> targetMesh_;
+    std::shared_ptr<MR::Mesh> initialMesh_;  // 初始场景的长方体
     std::shared_ptr<MR::Mesh> cutterMesh_;
     std::shared_ptr<MR::Mesh> resultMesh_;
+    
+    // 目标网格包围盒
+    MR::Box3f targetBoundingBox_;
     
     // 圆柱体位置
     MR::Vector3f cutterPosition_;
@@ -110,6 +133,7 @@ private:
     
     QPushButton* btnLoad_ = nullptr;
     QPushButton* btnSave_ = nullptr;
+    QPushButton* btnSavePiece_ = nullptr;
     QPushButton* btnCut_ = nullptr;
     QPushButton* btnReset_ = nullptr;
     
@@ -122,6 +146,9 @@ private:
     
     QComboBox* comboVisualMode_ = nullptr;
     QLabel* infoLabel_ = nullptr;
+    
+    // 切割碎片网格
+    std::shared_ptr<MR::Mesh> cutPieceMesh_;
     
     // 当前加载的文件路径
     QString currentFilePath_;

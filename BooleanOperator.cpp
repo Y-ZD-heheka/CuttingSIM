@@ -20,7 +20,7 @@ MR::BooleanOperation BooleanOperator::convertType(BooleanType type) const
         case BooleanType::Intersection:
             return MR::BooleanOperation::Intersection;
         case BooleanType::Difference:
-            return MR::BooleanOperation::DifferenceAB;
+            return MR::BooleanOperation::Intersection;
         default:
             return MR::BooleanOperation::Union;
     }
@@ -88,4 +88,24 @@ BooleanResult BooleanOperator::execute(const MR::Mesh& meshA,
 BooleanResult BooleanOperator::difference(const MR::Mesh& meshA, const MR::Mesh& meshB)
 {
     return execute(meshA, meshB, BooleanType::Difference);
+}
+
+BooleanResult BooleanOperator::getCutPiece(const MR::Mesh& meshA, const MR::Mesh& meshB)
+{
+    // 获取 A 中在 B 内部的部分（即被切掉的碎片）
+    // 使用 InsideA 操作
+    MR::BooleanResult mrResult = MR::boolean(meshA, meshB, MR::BooleanOperation::InsideA);
+    
+    BooleanResult result;
+    
+    if (!mrResult.valid())
+    {
+        result.errorMsg = mrResult.errorString;
+        return result;
+    }
+    
+    result.mesh = *mrResult;
+    result.success = true;
+    
+    return result;
 }

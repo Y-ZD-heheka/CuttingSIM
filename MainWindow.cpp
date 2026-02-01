@@ -7,6 +7,7 @@
 #include <MRMesh/MRMeshLoad.h>
 #include <MRMesh/MRMeshSave.h>
 #include <MRMesh/MRBox.h>
+#include <MRMesh/MRMeshBuilder.h>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -33,6 +34,9 @@ MainWindow::MainWindow(QWidget* parent)
     
     setupUI();
     createMenus();
+    
+    // 创建初始场景（长方体）
+    createInitialScene();
     
     // 初始化可视化器
     visualizer_->setCutterMesh(cutterMesh_);
@@ -65,9 +69,12 @@ void MainWindow::setupUI()
     QHBoxLayout* fileBtnLayout = new QHBoxLayout();
     btnLoad_ = new QPushButton("Load Mesh (加载模型)");
     btnSave_ = new QPushButton("Save Result (保存结果)");
+    btnSavePiece_ = new QPushButton("Save Piece (保存碎片)");
     btnSave_->setEnabled(false);
+    btnSavePiece_->setEnabled(false);
     fileBtnLayout->addWidget(btnLoad_);
     fileBtnLayout->addWidget(btnSave_);
+    fileBtnLayout->addWidget(btnSavePiece_);
     fileLayout->addLayout(fileBtnLayout);
     
     infoLabel_ = new QLabel("No mesh loaded (未加载模型)");
@@ -189,6 +196,7 @@ void MainWindow::setupUI()
     // ===== 连接信号槽 =====
     connect(btnLoad_, &QPushButton::clicked, this, &MainWindow::onLoadTargetMesh);
     connect(btnSave_, &QPushButton::clicked, this, &MainWindow::onSaveResult);
+    connect(btnSavePiece_, &QPushButton::clicked, this, &MainWindow::onSaveCutPiece);
     connect(btnCut_, &QPushButton::clicked, this, &MainWindow::onExecuteCut);
     connect(btnReset_, &QPushButton::clicked, this, &MainWindow::onResetCutter);
     
@@ -275,6 +283,20 @@ void MainWindow::onLoadTargetMesh()
     targetMesh_ = std::make_shared<MR::Mesh>(std::move(result.value()));
     currentFilePath_ = fileName;
     
+    // 获取并保存目标网格的包围盒
+    targetBoundingBox_ = targetMesh_->computeBoundingBox();
+    
+    // 输出包围盒信息到控制台
+    qDebug() << "=== Target Mesh Bounding Box ===";
+    qDebug() << "Min Point: (" << targetBoundingBox_.min.x << ", " << targetBoundingBox_.min.y << ", " << targetBoundingBox_.min.z << ")";
+    qDebug() << "Max Point: (" << targetBoundingBox_.max.x << ", " << targetBoundingBox_.max.y << ", " << targetBoundingBox_.max.z << ")";
+    qDebug() << "Size: (" << (targetBoundingBox_.max.x - targetBoundingBox_.min.x) 
+             << "x" << (targetBoundingBox_.max.y - targetBoundingBox_.min.y) 
+             << "x" << (targetBoundingBox_.max.z - targetBoundingBox_.min.z) << ")";
+    qDebug() << "Center: (" << (targetBoundingBox_.min.x + targetBoundingBox_.max.x) / 2.0f
+             << "," << (targetBoundingBox_.min.y + targetBoundingBox_.max.y) / 2.0f
+             << "," << (targetBoundingBox_.min.z + targetBoundingBox_.max.z) / 2.0f << ")";
+    
     // 更新可视化器
     visualizer_->setTargetMesh(targetMesh_);
     
@@ -287,6 +309,7 @@ void MainWindow::onLoadTargetMesh()
     
     // 清除之前的结果
     resultMesh_.reset();
+    cutPieceMesh_.reset();
     visualizer_->setResultMesh(nullptr);
 }
 
@@ -306,9 +329,36 @@ void MainWindow::onSaveResult()
         return;
     }
     
-    if (visualizer_->saveResult(fileName)) {
+    auto saveResult = MR::MeshSave::toAnySupportedFormat(*resultMesh_, fileName.toStdString());
+    if (saveResult.has_value()) {
         QMessageBox::information(this, "Success (成功)", 
             QString("Result saved to:\n%1").arg(fileName));
+    } else {
+        QMessageBox::critical(this, "Error (错误)", "Failed to save file (保存失败)");
+    }
+}
+
+void MainWindow::onSaveCutPiece()
+{
+    if (!cutPieceMesh_ || cutPieceMesh_->points.empty()) {
+        QMessageBox::warning(this, "Warning (警告)", 
+            "No cut piece to save (没有可保存的碎片)\n请先执行切割操作");
+        return;
+    }
+    
+    QString fileName = QFileDialog::getSaveFileName(this,
+        "Save Cut Piece (保存切割碎片)",
+        "cut_piece.stl",
+        "STL Files (*.stl);;OBJ Files (*.obj);;PLY Files (*.ply)");
+    
+    if (fileName.isEmpty()) {
+        return;
+    }
+    
+    auto saveResult = MR::MeshSave::toAnySupportedFormat(*cutPieceMesh_, fileName.toStdString());
+    if (saveResult.has_value()) {
+        QMessageBox::information(this, "Success (成功)", 
+            QString("Cut piece saved to:\n%1").arg(fileName));
     } else {
         QMessageBox::critical(this, "Error (错误)", "Failed to save file (保存失败)");
     }
@@ -322,8 +372,9 @@ void MainWindow::onExecuteCut()
         return;
     }
     
-    // 执行布尔差集运算
+    // 执行布尔差集运算 (A - B) - 保留切割后的主体
     BooleanResult result = booleanOp_.difference(*targetMesh_, *cutterMesh_);
+    // BooleanResult result = booleanOp_.difference(*cutterMesh_, *targetMesh_);
     
     if (!result.success) {
         QMessageBox::critical(this, "Error (错误)", 
@@ -331,9 +382,22 @@ void MainWindow::onExecuteCut()
         return;
     }
     
-    // 保存结果
+    // 保存结果网格
     resultMesh_ = std::make_shared<MR::Mesh>(std::move(result.mesh));
+    targetMesh_ = resultMesh_;
     visualizer_->setResultMesh(resultMesh_);
+    
+    // 获取被切掉的碎片 (刀具内部的模型部分)
+    BooleanResult pieceResult = booleanOp_.getCutPiece(*targetMesh_, *cutterMesh_);
+    
+    if (pieceResult.success && !pieceResult.mesh.points.empty()) {
+        cutPieceMesh_ = std::make_shared<MR::Mesh>(std::move(pieceResult.mesh));
+        btnSavePiece_->setEnabled(true);
+        
+        qDebug() << "=== Cut Piece Info ===";
+        qDebug() << "Vertices:" << cutPieceMesh_->topology.numValidVerts();
+        qDebug() << "Faces:" << cutPieceMesh_->topology.numValidFaces();
+    }
     
     // 自动切换到结果显示模式
     comboVisualMode_->setCurrentIndex(3);  // Result Only
@@ -436,4 +500,101 @@ void MainWindow::onVisualModeChanged(int index)
     Q_UNUSED(index)
     int modeValue = comboVisualMode_->currentData().toInt();
     visualizer_->setVisualMode(static_cast<VisualMode>(modeValue));
+}
+
+void MainWindow::createInitialScene()
+{
+    // 创建长方体：中心点(0, 0, 12.5)，尺寸10×10×25mm
+    // 这样圆柱体下半部分(-25到0)与长方体(Z:0-25)相交
+    MR::Vector3f boxCenter(0.0f, 0.0f, 15.0f);
+    MR::Vector3f boxSize(20.0f, 20.0f, 25.0f);
+    
+    initialMesh_ = std::make_shared<MR::Mesh>(createBoxMesh(boxCenter, boxSize));
+    
+    // 同时设置 targetMesh_（用于信息显示和布尔运算）
+    targetMesh_ = initialMesh_;
+    
+    // 将初始场景作为目标网格设置到可视化器
+    visualizer_->setTargetMesh(initialMesh_);
+    
+    // 启用切割按钮
+    btnCut_->setEnabled(true);
+    
+    // 输出调试信息
+    qDebug() << "=== Initial Scene (Box) ===";
+    qDebug() << "Center: (" << boxCenter.x << ", " << boxCenter.y << ", " << boxCenter.z << ")";
+    qDebug() << "Size: " << boxSize.x << "x" << boxSize.y << "x" << boxSize.z;
+    qDebug() << "Bounding Box: X[-5,5], Y[-5,5], Z[0,25]";
+    
+    // 更新信息标签
+    updateInfoLabel();
+}
+
+MR::Mesh MainWindow::createBoxMesh(const MR::Vector3f& center, const MR::Vector3f& size)
+{
+    // 计算长方体的8个顶点
+    float halfW = size.x / 2.0f;
+    float halfH = size.y / 2.0f;
+    float halfD = size.z / 2.0f;
+    
+    // 顶点坐标（相对于中心点）
+    // 底面4个顶点 (Z最小)
+    MR::VertId v0(0); // (-halfW, -halfH, -halfD) + center
+    MR::VertId v1(1); // ( halfW, -halfH, -halfD) + center
+    MR::VertId v2(2); // ( halfW,  halfH, -halfD) + center
+    MR::VertId v3(3); // (-halfW,  halfH, -halfD) + center
+    
+    // 顶面4个顶点 (Z最大)
+    MR::VertId v4(4); // (-halfW, -halfH,  halfD) + center
+    MR::VertId v5(5); // ( halfW, -halfH,  halfD) + center
+    MR::VertId v6(6); // ( halfW,  halfH,  halfD) + center
+    MR::VertId v7(7); // (-halfW,  halfH,  halfD) + center
+    
+    MR::VertCoords points;
+    points.reserve(8);
+    
+    // 添加8个顶点（带中心偏移）
+    points.emplace_back(center.x - halfW, center.y - halfH, center.z - halfD); // v0
+    points.emplace_back(center.x + halfW, center.y - halfH, center.z - halfD); // v1
+    points.emplace_back(center.x + halfW, center.y + halfH, center.z - halfD); // v2
+    points.emplace_back(center.x - halfW, center.y + halfH, center.z - halfD); // v3
+    points.emplace_back(center.x - halfW, center.y - halfH, center.z + halfD); // v4
+    points.emplace_back(center.x + halfW, center.y - halfH, center.z + halfD); // v5
+    points.emplace_back(center.x + halfW, center.y + halfH, center.z + halfD); // v6
+    points.emplace_back(center.x - halfW, center.y + halfH, center.z + halfD); // v7
+    
+    // 创建12个三角形面（6个面 × 2个三角形）
+    MR::Triangulation tris;
+    tris.reserve(12);
+    
+    // 底面 (Z-)
+    tris.push_back({v0, v2, v1});
+    tris.push_back({v0, v3, v2});
+    
+    // 顶面 (Z+)
+    tris.push_back({v4, v5, v6});
+    tris.push_back({v4, v6, v7});
+    
+    // 前面 (Y-)
+    tris.push_back({v0, v1, v5});
+    tris.push_back({v0, v5, v4});
+    
+    // 后面 (Y+)
+    tris.push_back({v3, v6, v2});
+    tris.push_back({v3, v7, v6});
+    
+    // 左面 (X-)
+    tris.push_back({v0, v4, v7});
+    tris.push_back({v0, v7, v3});
+    
+    // 右面 (X+)
+    tris.push_back({v1, v2, v6});
+    tris.push_back({v1, v6, v5});
+    
+    // 构建网格
+    MR::Mesh mesh;
+    mesh.topology = MR::MeshBuilder::fromTriangles(tris);
+    mesh.points = std::move(points);
+    
+    return mesh;
 }

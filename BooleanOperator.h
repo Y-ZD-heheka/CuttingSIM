@@ -19,7 +19,7 @@ enum class BooleanType
 {
     Union,          ///< 并集 (A + B)
     Intersection,   ///< 交集 (A ∩ B)
-    Difference      ///< 差集 (A - B)
+    Difference,     ///< 差集 (A - B)
 };
 
 /**
@@ -60,6 +60,14 @@ public:
      * @return 运算结果
      */
     BooleanResult difference(const MR::Mesh& meshA, const MR::Mesh& meshB);
+    
+    /**
+     * @brief 获取切割碎片 (刀具内部的模型部分)
+     * @param meshA 被切割网格
+     * @param meshB 切割工具网格
+     * @return 被切掉的部分网格
+     */
+    BooleanResult getCutPiece(const MR::Mesh& meshA, const MR::Mesh& meshB);
     
     /**
      * @brief 将布尔类型转换为字符串

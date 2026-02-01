@@ -17,7 +17,7 @@ CylinderGenerator::CylinderGenerator()
     // 默认参数：长50mm，直径6mm
     params_.length = 50.0f;
     params_.diameter = 6.0f;
-    params_.segments = 32;
+    params_.segments = 64;
 }
 
 void CylinderGenerator::setParams(const CylinderParams& params)
